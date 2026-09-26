@@ -5,7 +5,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 const WS_URL = import.meta.env.VITE_WS_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:8787`;
 
 // wake the (possibly sleeping free-tier) server while the user is on the join screen
-fetch(WS_URL.replace(/^ws(s?):/, 'http$1:') + '/health').catch(() => {});
+fetch(WS_URL.replace(/^ws(s?):/, 'http$1:') + '/health', { mode: 'no-cors' }).catch(() => {});
 
 // ---------- three.js scene ----------
 const app = document.getElementById('app');
@@ -264,6 +264,7 @@ function tick() {
   const k = 1 - Math.exp(-10 * dt); // smoothing
 
   const me = players.get(myId);
+  window.__dbg = () => me ? [me.group.position.x, me.group.position.z, joyX, joyZ] : null;
   for (const [id, p] of players) {
     p.group.position.x += (p.tx - p.group.position.x) * k;
     p.group.position.z += (p.tz - p.group.position.z) * k;
