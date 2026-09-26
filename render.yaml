@@ -12,7 +12,6 @@ services:
     name: knight-arena
     runtime: static
     plan: free
-    region: singapore
     buildCommand: npm install && npx vite build
     staticPublishPath: dist
     envVars:
