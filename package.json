@@ -1,0 +1,24 @@
+{
+  "name": "mecharena",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "vite",
+    "build": "vite build",
+    "server": "node server/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "nipplejs": "^1.0.4",
+    "three": "^0.186.1",
+    "vite": "^8.3.1",
+    "ws": "^8.21.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

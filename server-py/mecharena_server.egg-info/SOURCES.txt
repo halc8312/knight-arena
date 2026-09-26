@@ -1,0 +1,8 @@
+pyproject.toml
+app/__init__.py
+app/main.py
+mecharena_server.egg-info/PKG-INFO
+mecharena_server.egg-info/SOURCES.txt
+mecharena_server.egg-info/dependency_links.txt
+mecharena_server.egg-info/requires.txt
+mecharena_server.egg-info/top_level.txt

@@ -1,0 +1,238 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import nipplejs from 'nipplejs';
+
+const WS_URL = import.meta.env.VITE_WS_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:8787`;
+
+// ---------- three.js scene ----------
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1420);
+scene.fog = new THREE.Fog(0x0d1420, 30, 90);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 200);
+
+scene.add(new THREE.HemisphereLight(0x9db4d4, 0x1a1f2a, 1.1));
+const sun = new THREE.DirectionalLight(0xfff2dd, 1.6);
+sun.position.set(15, 25, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = sun.shadow.camera.bottom = -60;
+sun.shadow.camera.right = sun.shadow.camera.top = 60;
+scene.add(sun);
+
+// ground: dark grid arena
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(50, 64),
+  new THREE.MeshStandardMaterial({ color: 0x18202e, roughness: 0.9 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+const grid = new THREE.PolarGridHelper(50, 16, 24, 64, 0x2a4a6a, 0x1c2c40);
+grid.position.y = 0.01;
+scene.add(grid);
+// boundary pillars
+const pillarGeo = new THREE.CylinderGeometry(0.3, 0.4, 5, 8);
+const pillarMat = new THREE.MeshStandardMaterial({ color: 0x24354d, emissive: 0x0a2038 });
+for (let i = 0; i < 24; i++) {
+  const a = (i / 24) * Math.PI * 2;
+  const p = new THREE.Mesh(pillarGeo, pillarMat);
+  p.position.set(Math.cos(a) * 48.5, 2.5, Math.sin(a) * 48.5);
+  p.castShadow = true;
+  scene.add(p);
+}
+
+// ---------- avatar ----------
+let template = null;
+const loader = new GLTFLoader();
+loader.load('/assets/avatar.glb', (gltf) => {
+  template = gltf.scene;
+  // normalize: model height -> 2.6 units, grounded at y=0
+  const box = new THREE.Box3().setFromObject(template);
+  const size = box.getSize(new THREE.Vector3());
+  const s = 2.6 / size.y;
+  template.scale.setScalar(s);
+  const box2 = new THREE.Box3().setFromObject(template);
+  template.position.y = -box2.min.y;
+  template.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  document.getElementById('conn').textContent = '— model ready';
+});
+
+function makeLabel(text, colorHex) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.font = 'bold 34px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
+  ctx.fillStyle = '#' + colorHex.toString(16).padStart(6, '0');
+  ctx.fillText(text, 128, 42);
+  const tex = new THREE.CanvasTexture(c);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+  sp.scale.set(2.2, 0.55, 1);
+  sp.position.y = 3.1;
+  return sp;
+}
+
+const players = new Map(); // id -> { group, label, x, z, rotY }
+function addPlayer(id, info) {
+  const group = new THREE.Group();
+  const body = template ? SkeletonUtils.clone(template) : placeholderMech(info.color);
+  group.add(body);
+  const label = makeLabel(info.name, info.color);
+  group.add(label);
+  scene.add(group);
+  players.set(id, { group, label, body, tx: info.x ?? 0, tz: info.z ?? 0, trot: info.rotY ?? 0, name: info.name, color: info.color });
+  updateCount();
+}
+function placeholderMech(color) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1.4, 4, 12),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.4 }));
+  body.position.y = 1.3; body.castShadow = true;
+  g.add(body);
+  return g;
+}
+function removePlayer(id) {
+  const p = players.get(id);
+  if (p) { scene.remove(p.group); players.delete(id); updateCount(); }
+}
+function updateCount() { document.getElementById('count').textContent = players.size; }
+
+// when template finishes loading later, swap placeholders for real models
+function upgradePlaceholders() {
+  if (!template) return;
+  for (const p of players.values()) {
+    const isPlaceholder = p.body.children[0]?.geometry?.type === 'CapsuleGeometry';
+    if (isPlaceholder) {
+      const real = SkeletonUtils.clone(template);
+      p.group.remove(p.body); p.group.add(real); p.body = real;
+    }
+  }
+}
+const _origLoad = template;
+setInterval(upgradePlaceholders, 1000);
+
+// ---------- networking ----------
+let ws, myId = null, myName = '';
+const posBuffer = new Map(); // id -> {tx, tz, trot} latest target
+
+function connect() {
+  document.getElementById('conn').textContent = '— connecting…';
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    document.getElementById('conn').textContent = '— connected';
+    ws.send(JSON.stringify({ type: 'input', name: myName || undefined }));
+  };
+  ws.onclose = () => {
+    document.getElementById('conn').textContent = '— disconnected, retrying…';
+    for (const id of [...players.keys()]) removePlayer(id);
+    setTimeout(connect, 1500);
+  };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'welcome') {
+      myId = m.id;
+      for (const q of m.players) addPlayer(q.id, q);
+    } else if (m.type === 'join') {
+      addPlayer(m.id, m);
+    } else if (m.type === 'leave') {
+      removePlayer(m.id);
+    } else if (m.type === 'state') {
+      for (const [id, x, z, rotY, name, color] of m.players) {
+        let p = players.get(id);
+        if (!p) { addPlayer(id, { x, z, rotY, name, color }); p = players.get(id); }
+        p.tx = x; p.tz = z; p.trot = rotY;
+      }
+    }
+  };
+}
+
+// ---------- input ----------
+let joyX = 0, joyZ = 0;
+const stick = nipplejs.create({
+  zone: document.querySelector('#stick .zone'),
+  mode: 'static', position: { left: '60px', bottom: '60px' },
+  color: '#6cf', size: 110, restOpacity: 0.6,
+});
+stick.on('move', (_, d) => {
+  const f = d.force > 1 ? 1 : d.force;
+  const a = d.angle.radian;
+  joyX = Math.cos(a) * f;
+  joyZ = -Math.sin(a) * f;
+});
+stick.on('end', () => { joyX = 0; joyZ = 0; });
+
+// desktop fallback: WASD/arrows
+const keys = {};
+addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
+addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+
+// send input at 30Hz
+setInterval(() => {
+  if (!ws || ws.readyState !== 1) return;
+  let dx = joyX, dz = joyZ;
+  if (keys['w'] || keys['arrowup']) dz -= 1;
+  if (keys['s'] || keys['arrowdown']) dz += 1;
+  if (keys['a'] || keys['arrowleft']) dx -= 1;
+  if (keys['d'] || keys['arrowright']) dx += 1;
+  const rotY = Math.hypot(dx, dz) > 0.1 ? Math.atan2(dx, dz) : undefined;
+  ws.send(JSON.stringify({ type: 'input', dx, dz, rotY }));
+}, 33);
+
+// ---------- camera + render ----------
+const camOffset = new THREE.Vector3(0, 4.2, -6.5);
+const clock = new THREE.Clock();
+function tick() {
+  requestAnimationFrame(tick);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  const k = 1 - Math.exp(-10 * dt); // smoothing
+
+  const me = players.get(myId);
+  for (const [id, p] of players) {
+    p.group.position.x += (p.tx - p.group.position.x) * k;
+    p.group.position.z += (p.tz - p.group.position.z) * k;
+    // shortest-angle turn
+    let d = p.trot - p.group.rotation.y;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    p.group.rotation.y += d * k;
+    // slight bob while moving
+    const moving = Math.hypot(p.tx - p.group.position.x, p.tz - p.group.position.z) > 0.05;
+    p.body.position.y = moving ? Math.abs(Math.sin(performance.now() / 180)) * 0.08 : 0;
+  }
+
+  if (me) {
+    const target = me.group.position.clone().add(camOffset);
+    camera.position.lerp(target, k * 0.8);
+    camera.lookAt(me.group.position.x, me.group.position.y + 1.5, me.group.position.z);
+  } else {
+    camera.position.lerp(new THREE.Vector3(0, 30, 30), k);
+    camera.lookAt(0, 0, 0);
+  }
+  renderer.render(scene, camera);
+}
+tick();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------- join flow ----------
+function start() {
+  myName = document.getElementById('name').value.trim() || `Mech-${Math.floor(Math.random() * 1000)}`;
+  document.getElementById('join').style.display = 'none';
+  connect();
+}
+document.getElementById('play').addEventListener('click', start);
+if (new URLSearchParams(location.search).has('auto')) start();

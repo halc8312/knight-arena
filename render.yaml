@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: knight-arena-server
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install --omit=dev
+    startCommand: node server/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+  - type: web
+    name: knight-arena
+    runtime: static
+    plan: free
+    region: singapore
+    buildCommand: npm install && npx vite build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_WS_URL
+        value: wss://knight-arena-server.onrender.com
