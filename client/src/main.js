@@ -240,7 +240,7 @@ addEventListener('resize', () => {
 
 // ---------- join flow ----------
 function start() {
-  myName = document.getElementById('name').value.trim() || `Mech-${Math.floor(Math.random() * 1000)}`;
+  myName = document.getElementById('name').value.trim() || `Knight-${Math.floor(Math.random() * 1000)}`;
   document.getElementById('join').style.display = 'none';
   connect();
 }
