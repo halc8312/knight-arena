@@ -53,9 +53,11 @@ for (let i = 0; i < 24; i++) {
 
 // ---------- avatar ----------
 let template = null;
+let animClips = [];
 const loader = new GLTFLoader();
 loader.load('/assets/avatar.glb', (gltf) => {
   template = gltf.scene;
+  animClips = gltf.animations;
   // normalize: model height -> 2.6 units, grounded at y=0
   const box = new THREE.Box3().setFromObject(template);
   const size = box.getSize(new THREE.Vector3());
@@ -66,6 +68,10 @@ loader.load('/assets/avatar.glb', (gltf) => {
   template.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
   document.getElementById('conn').textContent = '— model ready';
 });
+
+function findClip(re) {
+  return animClips.find((c) => re.test(c.name)) || null;
+}
 
 function makeLabel(text, colorHex) {
   const c = document.createElement('canvas');
@@ -91,8 +97,32 @@ function addPlayer(id, info) {
   const label = makeLabel(info.name, info.color);
   group.add(label);
   scene.add(group);
-  players.set(id, { group, label, body, tx: info.x ?? 0, tz: info.z ?? 0, trot: info.rotY ?? 0, name: info.name, color: info.color });
+  const p = { group, label, body, tx: info.x ?? 0, tz: info.z ?? 0, trot: info.rotY ?? 0, name: info.name, color: info.color, mixer: null, actions: null, anim: null };
+  setupAnims(p);
+  players.set(id, p);
   updateCount();
+}
+
+// real skeletal animation: idle / run (rigged CC0 knight model)
+function setupAnims(p) {
+  if (!animClips.length) return;
+  const idle = findClip(/^Idle$/) || findClip(/Idle/);
+  const move = findClip(/Running_A/) || findClip(/Walking_A/);
+  if (!idle && !move) return;
+  p.mixer = new THREE.AnimationMixer(p.body);
+  p.actions = {};
+  if (idle) p.actions.idle = p.mixer.clipAction(idle);
+  if (move) p.actions.move = p.mixer.clipAction(move);
+  p.anim = 'idle';
+  (p.actions.idle || p.actions.move).play();
+}
+function setAnim(p, name) {
+  if (!p.actions || p.anim === name) return;
+  const from = p.actions[p.anim], to = p.actions[name];
+  if (!to) return;
+  to.reset().fadeIn(0.15).play();
+  if (from) from.fadeOut(0.15);
+  p.anim = name;
 }
 function placeholderMech(color) {
   const g = new THREE.Group();
@@ -116,6 +146,7 @@ function upgradePlaceholders() {
     if (isPlaceholder) {
       const real = SkeletonUtils.clone(template);
       p.group.remove(p.body); p.group.add(real); p.body = real;
+      setupAnims(p);
     }
   }
 }
@@ -152,6 +183,14 @@ function connect() {
         let p = players.get(id);
         if (!p) { addPlayer(id, { x, z, rotY, name, color }); p = players.get(id); }
         p.tx = x; p.tz = z; p.trot = rotY;
+        if (p.name !== name) { // name arrives after join — rebuild the nameplate
+          p.name = name;
+          p.group.remove(p.label);
+          p.label.material.map.dispose();
+          p.label.material.dispose();
+          p.label = makeLabel(name, p.color);
+          p.group.add(p.label);
+        }
       }
     }
   };
@@ -211,13 +250,15 @@ function tick() {
     let d = p.trot - p.group.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     p.group.rotation.y += d * k;
-    // procedural walk feel on a static mesh: bob + step roll + forward lean
     const moving = Math.hypot(p.tx - p.group.position.x, p.tz - p.group.position.z) > 0.05;
-    const t = performance.now() / 1000;
-    const targetLean = moving ? 0.22 : 0;
-    p.body.rotation.x += (targetLean - p.body.rotation.x) * k;
-    p.body.rotation.z = moving ? Math.sin(t * 9) * 0.07 : p.body.rotation.z * (1 - k);
-    p.body.position.y = moving ? Math.abs(Math.sin(t * 9)) * 0.12 : p.body.position.y * (1 - k);
+    if (p.mixer) {
+      setAnim(p, moving ? 'move' : 'idle');
+      p.mixer.update(dt);
+    } else {
+      // placeholder bob until the rigged model loads
+      const t = performance.now() / 1000;
+      p.body.position.y = moving ? Math.abs(Math.sin(t * 9)) * 0.12 : p.body.position.y * (1 - k);
+    }
   }
 
   if (me) {

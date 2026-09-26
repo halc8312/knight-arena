@@ -34,7 +34,7 @@ wss.on('connection', (ws) => {
   const { x, z } = spawnPos();
   const p = {
     ws, x, z, rotY: 0, dx: 0, dz: 0,
-    name: `Mech-${id}`,
+    name: `Knight-${id}`,
     color: Math.floor(Math.random() * 0xffffff),
   };
   players.set(id, p);
