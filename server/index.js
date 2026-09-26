@@ -4,7 +4,7 @@ const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 8787;
 const TICK_MS = 1000 / 15;
-const SPEED = 6.0; // units per second
+const SPEED = 7.5; // units per second
 const BOUND = 48;  // world half-size
 
 const server = http.createServer((req, res) => {

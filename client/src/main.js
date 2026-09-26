@@ -177,14 +177,20 @@ const keys = {};
 addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
 addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
 
-// send input at 30Hz
+// send input at 30Hz — joystick/keys are screen-space, converted to world via camera basis
+const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 setInterval(() => {
   if (!ws || ws.readyState !== 1) return;
-  let dx = joyX, dz = joyZ;
-  if (keys['w'] || keys['arrowup']) dz -= 1;
-  if (keys['s'] || keys['arrowdown']) dz += 1;
-  if (keys['a'] || keys['arrowleft']) dx -= 1;
-  if (keys['d'] || keys['arrowright']) dx += 1;
+  let sx = joyX, sy = -joyZ; // screen space: right = +x, up = +1
+  if (keys['w'] || keys['arrowup']) sy += 1;
+  if (keys['s'] || keys['arrowdown']) sy -= 1;
+  if (keys['a'] || keys['arrowleft']) sx -= 1;
+  if (keys['d'] || keys['arrowright']) sx += 1;
+  camera.getWorldDirection(_fwd); _fwd.y = 0;
+  if (_fwd.lengthSq() < 1e-6) _fwd.set(0, 0, 1); _fwd.normalize();
+  _right.crossVectors(_fwd, _up); // screen-right on the ground plane
+  const dx = _right.x * sx + _fwd.x * sy;
+  const dz = _right.z * sx + _fwd.z * sy;
   const rotY = Math.hypot(dx, dz) > 0.1 ? Math.atan2(dx, dz) : undefined;
   ws.send(JSON.stringify({ type: 'input', dx, dz, rotY }));
 }, 33);
@@ -205,9 +211,13 @@ function tick() {
     let d = p.trot - p.group.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     p.group.rotation.y += d * k;
-    // slight bob while moving
+    // procedural walk feel on a static mesh: bob + step roll + forward lean
     const moving = Math.hypot(p.tx - p.group.position.x, p.tz - p.group.position.z) > 0.05;
-    p.body.position.y = moving ? Math.abs(Math.sin(performance.now() / 180)) * 0.08 : 0;
+    const t = performance.now() / 1000;
+    const targetLean = moving ? 0.22 : 0;
+    p.body.rotation.x += (targetLean - p.body.rotation.x) * k;
+    p.body.rotation.z = moving ? Math.sin(t * 9) * 0.07 : p.body.rotation.z * (1 - k);
+    p.body.position.y = moving ? Math.abs(Math.sin(t * 9)) * 0.12 : p.body.position.y * (1 - k);
   }
 
   if (me) {
