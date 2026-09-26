@@ -13,7 +13,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "nipplejs": "^1.0.4",
     "three": "^0.186.1",
     "vite": "^8.3.1",
     "ws": "^8.21.3"

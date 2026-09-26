@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
-import nipplejs from 'nipplejs';
 
 const WS_URL = import.meta.env.VITE_WS_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:8787`;
+
+// wake the (possibly sleeping free-tier) server while the user is on the join screen
+fetch(WS_URL.replace(/^ws(s?):/, 'http$1:') + '/health').catch(() => {});
 
 // ---------- three.js scene ----------
 const app = document.getElementById('app');
@@ -197,19 +199,38 @@ function connect() {
 }
 
 // ---------- input ----------
+// hand-rolled joystick (pointer events work on every mobile browser)
 let joyX = 0, joyZ = 0;
-const stick = nipplejs.create({
-  zone: document.querySelector('#stick .zone'),
-  mode: 'static', position: { left: '60px', bottom: '60px' },
-  color: '#6cf', size: 110, restOpacity: 0.6,
+const zone = document.querySelector('#stick .zone');
+zone.innerHTML = '<div class="jbase"></div><div class="jknob"></div>';
+const knob = zone.querySelector('.jknob');
+let joyPointer = null;
+function joyMove(e) {
+  const r = zone.getBoundingClientRect();
+  const max = r.width / 2 - 26;
+  let vx = e.clientX - (r.left + r.width / 2);
+  let vy = e.clientY - (r.top + r.height / 2);
+  const len = Math.hypot(vx, vy);
+  if (len > max) { vx *= max / len; vy *= max / len; }
+  knob.style.transform = `translate(${vx}px, ${vy}px)`;
+  joyX = vx / max;
+  joyZ = vy / max; // screen space: down = +1
+}
+function joyEnd(e) {
+  if (e.pointerId !== joyPointer) return;
+  joyPointer = null;
+  joyX = 0; joyZ = 0;
+  knob.style.transform = 'translate(0px, 0px)';
+}
+zone.addEventListener('pointerdown', (e) => {
+  joyPointer = e.pointerId;
+  zone.setPointerCapture(joyPointer);
+  joyMove(e);
+  e.preventDefault();
 });
-stick.on('move', (_, d) => {
-  const f = d.force > 1 ? 1 : d.force;
-  const a = d.angle.radian;
-  joyX = Math.cos(a) * f;
-  joyZ = -Math.sin(a) * f;
-});
-stick.on('end', () => { joyX = 0; joyZ = 0; });
+zone.addEventListener('pointermove', (e) => { if (e.pointerId === joyPointer) joyMove(e); });
+zone.addEventListener('pointerup', joyEnd);
+zone.addEventListener('pointercancel', joyEnd);
 
 // desktop fallback: WASD/arrows
 const keys = {};
